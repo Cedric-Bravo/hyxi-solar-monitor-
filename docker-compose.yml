@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  hyxicalculator:
+    build: .
+    container_name: hyxicalculator
+    ports:
+      - "5000:5000"
+    environment:
+      # Configuration Flask
+      - FLASK_APP=app/server.py
+      - DEBUG=True
+      - HOST=0.0.0.0
+      - PORT=5000
+
+      # API Hyxi Cloud (modifier selon vos besoins)
+      - HYXI_API_BASE_URL=https://open.hyxicloud.com
+      - HYXI_ACCESS_KEY=${HYXI_ACCESS_KEY}
+      - HYXI_SECRET_KEY=${HYXI_SECRET_KEY}
+      - HYXI_APPLICATION=test
+    volumes:
+      # Monter le code en mode développement (commenter en production)
+      - ./app:/app/app
+      - ./config.py:/app/config.py
+    restart: unless-stopped
+    networks:
+      - hyxi-network
+
+networks:
+  hyxi-network:
+    driver: bridge

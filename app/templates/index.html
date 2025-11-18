@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HyxiCalculator - Dashboard de Télémétrie</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>HyxiCalculator</h1>
+            <p class="subtitle">{{ plant_name }} - Dashboard de télémétrie</p>
+            <div class="header-indicators">
+                <div class="status-indicator" id="apiStatus">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">Vérification de la connexion...</span>
+                </div>
+                <div class="tempo-indicator" id="tempoIndicator">
+                    <span class="tempo-badge" id="tempoBadge">
+                        <span id="tempoEmoji">🔵</span>
+                        <span id="tempoText">Chargement...</span>
+                    </span>
+                    <span class="tempo-tarif" id="tempoTarif">--</span>
+                </div>
+                <div class="tempo-indicator" id="tempoTomorrowIndicator">
+                    <span class="tempo-badge" id="tempoTomorrowBadge">
+                        <span id="tempoTomorrowEmoji">🔵</span>
+                        <span id="tempoTomorrowText">Demain...</span>
+                    </span>
+                    <span class="tempo-tarif" id="tempoTomorrowTarif">--</span>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <!-- Section des données instantanées -->
+            <section class="card">
+                <h2>Données instantanées</h2>
+                <div class="realtime-container">
+                    <div class="realtime-data" id="realtimeData">
+                        <div class="loading">Chargement des données...</div>
+                    </div>
+                    <div class="charts-wrapper">
+                        <div class="autoconso-chart">
+                            <canvas id="autoconsoChart"></canvas>
+                            <div class="autoconso-label" id="autoconsoLabel">--</div>
+                        </div>
+                        <div class="yield-chart">
+                            <canvas id="yieldChart"></canvas>
+                            <div class="yield-label" id="yieldLabel">--</div>
+                        </div>
+                    </div>
+                </div>
+                <button onclick="refreshRealtime()" class="btn-refresh">Actualiser</button>
+            </section>
+
+            <!-- Section de production d'énergie -->
+            <section class="card">
+                <h2>Production d'énergie</h2>
+                <div class="energy-controls">
+                    <div class="control-group">
+                        <label for="periodSelect">Période:</label>
+                        <select id="periodSelect" onchange="refreshEnergyProduction()">
+                            <option value="day">Aujourd'hui</option>
+                            <option value="week">7 derniers jours</option>
+                            <option value="month">30 derniers jours</option>
+                            <option value="year">365 derniers jours</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="dateSelect">Date:</label>
+                        <input type="date" id="dateSelect" onchange="refreshEnergyProduction()">
+                        <span class="tempo-badge-inline" id="selectedDateTempo" style="margin-left: 10px;">
+                            <span id="selectedDateTempoEmoji">🔵</span>
+                            <span id="selectedDateTempoText">BLEU</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="energy-summary" id="energySummary">
+                    <div class="loading">Chargement des données...</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="energyChart"></canvas>
+                </div>
+            </section>
+
+            <!-- Section de calcul de coût -->
+            <section class="card">
+                <h2>Calcul de coût énergétique</h2>
+                <div class="cost-controls">
+                    <label for="tariffInput">Tarif (€/kWh):</label>
+                    <input type="number" id="tariffInput" value="0.15" step="0.01" min="0"
+                        onchange="refreshEnergyCost()">
+                </div>
+                <div class="cost-data" id="costData">
+                    <div class="loading">Chargement du calcul...</div>
+                </div>
+            </section>
+
+            <!-- Section de télémétrie brute -->
+            <section class="card">
+                <h2>Données de télémétrie (brutes)</h2>
+                <button onclick="toggleRawData()" class="btn-toggle">Afficher/Masquer</button>
+                <div class="telemetry-data hidden" id="telemetryData">
+                    <pre id="telemetryRaw">Aucune donnée</pre>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>HyxiCalculator - Surveillance énergétique en temps réel</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+
+</html>

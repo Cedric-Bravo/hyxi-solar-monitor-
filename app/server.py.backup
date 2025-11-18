@@ -1,0 +1,557 @@
+"""
+Serveur Flask pour HyxiCalculator
+Expose les données de télémétrie via API REST et interface web
+"""
+from flask import Flask, render_template, jsonify, request
+from datetime import datetime, timedelta
+import pytz
+import sys
+import os
+
+# Ajouter le répertoire parent au path pour les imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config import Config
+from app.api_client import HyxiAPIClient
+from app.tempo import TempoAPI
+
+# Timezone configuré
+TIMEZONE = pytz.timezone(Config.TIMEZONE)
+
+def now_tz():
+    """Retourne l'heure actuelle dans le timezone configuré"""
+    return datetime.now(TIMEZONE)
+
+def from_timestamp_tz(timestamp):
+    """Convertit un timestamp UTC en datetime avec le timezone configuré"""
+    return datetime.fromtimestamp(timestamp, tz=pytz.UTC).astimezone(TIMEZONE)
+
+
+# Initialisation de l'application Flask
+app = Flask(__name__)
+app.config.from_object(Config)
+
+# Initialisation du client API Hyxi
+hyxi_client = HyxiAPIClient(
+    access_key=Config.HYXI_ACCESS_KEY,
+    secret_key=Config.HYXI_SECRET_KEY,
+    base_url=Config.HYXI_API_BASE_URL
+)
+
+
+# Routes pour l'interface web
+@app.route('/')
+def index():
+    """Page d'accueil - Dashboard de télémétrie"""
+    return render_template('index.html', plant_name=Config.PLANT_NAME)
+
+
+# Routes API pour récupérer les données
+@app.route('/api/status')
+def api_status():
+    """Test de connexion à l'API Hyxi"""
+    result = hyxi_client.test_connection()
+    return jsonify(result)
+
+
+@app.route('/api/tempo/now')
+def api_tempo_now():
+    """Informations Tempo actuelles (couleur + tarif)"""
+    result = TempoAPI.get_current_info()
+    return jsonify(result)
+
+
+@app.route('/api/tempo/tarifs')
+def api_tempo_tarifs():
+    """Tous les tarifs Tempo"""
+    result = TempoAPI.get_all_tarifs()
+    return jsonify(result)
+
+
+@app.route('/api/tempo/tomorrow')
+def api_tempo_tomorrow():
+    """Informations Tempo pour demain (couleur + tarif HP)"""
+    result = TempoAPI.get_tomorrow_info()
+    return jsonify(result)
+
+
+@app.route('/api/config')
+def api_config():
+    """Retourne la configuration de l'installation (PLANT_NAME uniquement pour affichage)"""
+    return jsonify({
+        'plant_name': Config.PLANT_NAME,
+        'tarif_vente': Config.TARIF_VENTE
+    })
+
+
+@app.route('/api/plant/info')
+def api_plant_info():
+    """Informations détaillées de l'installation configurée"""
+    result = hyxi_client.get_plant_info(Config.PLANT_ID)
+    return jsonify(result)
+
+
+@app.route('/api/plant/power-generation')
+def api_plant_power_generation():
+    """Production d'énergie (jour/mois/année/total)"""
+    result = hyxi_client.get_plant_power_generation(Config.PLANT_ID)
+    return jsonify(result)
+
+
+@app.route('/api/plant/yield-statistics')
+def api_plant_yield_statistics():
+    """Statistiques de production par période"""
+    time_type = int(request.args.get('time_type', 1))  # 1=mois, 2=année, 3=total
+    start_time = request.args.get('start_time', now_tz().strftime('%Y-%m'))
+    result = hyxi_client.get_plant_yield_statistics(Config.PLANT_ID, time_type, start_time)
+    return jsonify(result)
+
+
+@app.route('/api/plant/statistics')
+def api_plant_statistics():
+    """Statistiques de production de l'installation configurée"""
+    start_time = request.args.get('start_time')
+
+    # Si pas de start_time fournie, utiliser aujourd'hui
+    if not start_time:
+        start_time = now_tz().strftime('%Y-%m-%d')
+
+    result = hyxi_client.get_plant_power_statistics(Config.PLANT_ID, start_time)
+    return jsonify(result)
+
+
+@app.route('/api/plant/realtime')
+def api_plant_realtime():
+    """
+    Données en temps réel de l'installation configurée
+    Combine les infos de l'installation et les statistiques du jour
+    """
+    try:
+        # Récupérer les infos de base de l'installation
+        plant_info = hyxi_client.get_plant_info(Config.PLANT_ID)
+        
+        if plant_info.get('error'):
+            return jsonify(plant_info)
+        
+        # Récupérer les statistiques du jour pour les données en temps réel
+        today = now_tz().strftime('%Y-%m-%d')
+        stats = hyxi_client.get_plant_power_statistics(Config.PLANT_ID, today)
+        
+        plant_data = plant_info.get('data', {})
+        stats_data = stats.get('data', {}) if not stats.get('error') else {}
+        
+        # Extraire les tableaux de puissance et timestamps
+        yield_power = stats_data.get('yieldPower', [])        # Production solaire (W)
+        consume_power = stats_data.get('consumePower', [])    # Consommation (W)
+        buy_power = stats_data.get('buyPower', [])            # Achat réseau (W)
+        time_points = stats_data.get('timePoint', [])         # Timestamps (secondes Unix)
+        
+        # Calculer l'énergie totale du jour en kWh (intervalles de 5 min)
+        interval_hours = 5 / 60  # 5 minutes en heures
+        
+        energy_produced_kwh = sum(p * interval_hours for p in yield_power) / 1000 if yield_power else 0
+        energy_consumed_kwh = sum(p * interval_hours for p in consume_power) / 1000 if consume_power else 0
+        energy_bought_kwh = sum(p * interval_hours for p in buy_power) / 1000 if buy_power else 0
+        
+        # Puissance actuelle (dernière valeur non nulle ou zéro)
+        current_power_produced = yield_power[-1] if yield_power and len(yield_power) > 0 else 0
+        current_power_consumed = consume_power[-1] if consume_power and len(consume_power) > 0 else 0
+        current_power_bought = buy_power[-1] if buy_power and len(buy_power) > 0 else 0
+        
+        # Timestamp de la dernière mesure
+        last_measurement_time = time_points[-1] if time_points and len(time_points) > 0 else None
+        last_measurement_datetime = from_timestamp_tz(last_measurement_time).strftime('%Y-%m-%d %H:%M:%S') if last_measurement_time else None
+        
+        # Récupérer le tarif Tempo actuel
+        tempo_info = TempoAPI.get_current_info()
+        tarif_achat = tempo_info.get('tarif_kwh', Config.TARIF_ACHAT)
+        
+        # Calculer le revenu du jour
+        if Config.RESALE_ENABLED:
+            # Mode revente : calcul point par point
+            interval_hours = 5 / 60
+            revenu_autoconso = 0  # Économie sur achat évité
+            revenu_vente = 0      # Gain sur surplus vendu
+            
+            for i in range(len(yield_power)):
+                prod = yield_power[i] if i < len(yield_power) else 0
+                cons = consume_power[i] if i < len(consume_power) else 0
+                
+                if prod >= cons:
+                    # Surplus : autoconso complète + vente du surplus
+                    autoconso_kwh = (cons * interval_hours) / 1000
+                    surplus_kwh = ((prod - cons) * interval_hours) / 1000
+                    revenu_autoconso += autoconso_kwh * tarif_achat
+                    revenu_vente += surplus_kwh * Config.TARIF_VENTE
+                else:
+                    # Déficit : autoconso partielle
+                    autoconso_kwh = (prod * interval_hours) / 1000
+                    revenu_autoconso += autoconso_kwh * tarif_achat
+            
+            revenu_jour = revenu_autoconso + revenu_vente
+        else:
+            # Mode simple : toute la production est autoconsommée
+            energy_autoconsummed_kwh = energy_produced_kwh
+            revenu_jour = energy_autoconsummed_kwh * tarif_achat
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                # Puissances actuelles (W)
+                'currentPowerProduced': round(current_power_produced, 0),
+                'currentPowerConsumed': round(current_power_consumed, 0),
+                'currentPowerBought': round(current_power_bought, 0),
+                
+                # Énergies du jour (kWh)
+                'todayEnergyProduced': round(energy_produced_kwh, 2),
+                'todayEnergyConsumed': round(energy_consumed_kwh, 2),
+                'todayEnergyBought': round(energy_bought_kwh, 2),
+                
+                # Revenu du jour (€)
+                'todayIncome': round(revenu_jour, 2),
+                
+                # Rendement instantané (%)
+                'currentYieldPercent': round((current_power_produced / (plant_data.get('capacity', 1) * 1000)) * 100, 1) if plant_data.get('capacity', 0) > 0 else 0,
+                
+                # Timestamp dernière mesure
+                'lastMeasurementTime': last_measurement_datetime,
+                
+                # Infos installation
+                'plantName': plant_data.get('plantName', Config.PLANT_NAME),
+                'capacity': plant_data.get('capacity', 0),
+                'status': 1 if current_power_produced > 0 else 0,
+                
+                # Tarif utilisé
+                'tarifAchat': round(tarif_achat, 4)
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': True,
+            'message': str(e)
+        })
+
+
+@app.route('/api/energy/production')
+def api_energy_production():
+    """
+    Production d'énergie pour une période donnée
+    Utilise l'installation configurée dans config.py
+    - Jour : données toutes les 5 min (queryPlantPowerStatistics)
+    - Semaine : données agrégées par jour sur 7 jours glissants (queryPlantYieldStatistics type=2 filtré)
+    - Mois : données agrégées par jour sur le mois (queryPlantYieldStatistics type=2)
+    - Année : données agrégées par mois sur l'année (queryPlantYieldStatistics type=3)
+    """
+    period = request.args.get('period', 'day')  # day, week, month, year
+    selected_date = request.args.get('date', None)  # Date au format YYYY-MM-DD
+
+    # Calculer la date de début selon la période ou la date sélectionnée
+    now = now_tz()
+    
+    if selected_date:
+        # Utiliser la date sélectionnée comme référence
+        try:
+            reference_date = TIMEZONE.localize(datetime.strptime(selected_date, '%Y-%m-%d'))
+        except ValueError:
+            return jsonify({'error': True, 'message': 'Format de date invalide'}), 400
+    else:
+        reference_date = now
+    
+    # Période "jour" : données détaillées toutes les 5 min
+    if period == 'day':
+        return _handle_day_period(reference_date)
+    # Périodes étendues : données agrégées
+    elif period == 'week':
+        return _handle_week_period(reference_date)
+    elif period == 'month':
+        return _handle_month_period(reference_date)
+    elif period == 'year':
+        return _handle_year_period(reference_date)
+    else:
+        return jsonify({'error': True, 'message': 'Période invalide'}), 400
+
+
+def _handle_day_period(reference_date):
+    """Gère la période 'jour' avec données toutes les 5 min"""
+    start_time = reference_date.strftime('%Y-%m-%d')
+    result = hyxi_client.get_plant_power_statistics(Config.PLANT_ID, start_time)
+    
+    # Traiter les données pour le graphique en courbes (points de 5 min)
+    if not result.get('error'):
+        stats_data = result.get('data', {})
+        yield_power = stats_data.get('yieldPower', [])
+        consume_power = stats_data.get('consumePower', [])
+        time_points = stats_data.get('timePoint', [])
+        
+        interval_hours = 5 / 60  # 5 minutes en heures
+        
+        # Préparer les données pour le graphique en courbes
+        labels = []
+        production_power = []  # W
+        consumption_power = []  # W
+        
+        for i, timestamp in enumerate(time_points):
+            dt = from_timestamp_tz(timestamp)
+            
+            # Format du label selon la période
+            if period == 'day':
+                label = dt.strftime('%H:%M')
+            elif period == 'week':
+                label = dt.strftime('%d/%m %H:%M')
+            else:
+                label = dt.strftime('%d/%m/%y %H:%M')
+            
+            labels.append(label)
+            production_power.append(yield_power[i] if i < len(yield_power) else 0)
+            consumption_power.append(consume_power[i] if i < len(consume_power) else 0)
+        
+        # Calculer l'énergie totale en kWh
+        total_production = sum(p * interval_hours for p in yield_power) / 1000 if yield_power else 0
+        total_consumption = sum(p * interval_hours for p in consume_power) / 1000 if consume_power else 0
+        
+        # Calculer l'achat total (achat = consommation - production, avec minimum à 0)
+        buy_power = stats_data.get('buyPower', [])
+        total_buy = sum(p * interval_hours for p in buy_power) / 1000 if buy_power else 0
+        
+        chart_data = {
+            'labels': labels,
+            'production': production_power,  # En W pour affichage direct
+            'consumption': consumption_power  # En W pour affichage direct
+        }
+        
+        # Puissance de pointe
+        peak_power_w = max(yield_power) if yield_power else 0
+        peak_power_kw = peak_power_w / 1000
+        
+        # Calculer le revenu selon le mode avec tarifs historisés
+        # Optimisation : cache des tarifs par date pour éviter trop d'appels API
+        tarifs_cache = {}  # {date_str: {tarif_hp, tarif_hc, couleur, couleur_css}}
+        
+        if Config.RESALE_ENABLED:
+            # Mode revente : calcul point par point avec tarifs historisés
+            revenu_autoconso = 0
+            revenu_vente = 0
+            
+            for i in range(len(yield_power)):
+                prod = yield_power[i] if i < len(yield_power) else 0
+                cons = consume_power[i] if i < len(consume_power) else 0
+                timestamp = time_points[i] if i < len(time_points) else None
+                
+                if not timestamp:
+                    tarif_achat = Config.TARIF_ACHAT
+                else:
+                    # Récupérer le tarif avec cache
+                    dt = from_timestamp_tz(timestamp)
+                    date_str = dt.strftime('%Y-%m-%d')
+                    
+                    if date_str not in tarifs_cache:
+                        day_info = TempoAPI.get_day_info(date_str)
+                        if day_info.get('success'):
+                            tarifs_cache[date_str] = {
+                                'tarif_hp': day_info['tarif_hp'],
+                                'tarif_hc': day_info['tarif_hc'],
+                                'couleur': day_info.get('couleur', 'INCONNU'),
+                                'couleur_css': day_info.get('couleur_css', 'gray')
+                            }
+                        else:
+                            tarifs_cache[date_str] = {
+                                'tarif_hp': Config.TARIF_ACHAT,
+                                'tarif_hc': Config.TARIF_ACHAT * 0.6,
+                                'couleur': 'INCONNU',
+                                'couleur_css': 'gray'
+                            }
+                    
+                    # Déterminer HP/HC
+                    hour = dt.hour
+                    is_hp = 6 <= hour < 22
+                    tarif_achat = tarifs_cache[date_str]['tarif_hp'] if is_hp else tarifs_cache[date_str]['tarif_hc']
+                
+                if prod >= cons:
+                    # Surplus : autoconso complète + vente du surplus
+                    autoconso_kwh = (cons * interval_hours) / 1000
+                    surplus_kwh = ((prod - cons) * interval_hours) / 1000
+                    revenu_autoconso += autoconso_kwh * tarif_achat
+                    revenu_vente += surplus_kwh * Config.TARIF_VENTE
+                else:
+                    # Déficit : autoconso partielle
+                    autoconso_kwh = (prod * interval_hours) / 1000
+                    revenu_autoconso += autoconso_kwh * tarif_achat
+            
+            revenu = revenu_autoconso + revenu_vente
+        else:
+            # Mode simple : calcul avec tarifs historisés point par point
+            revenu = 0
+            for i in range(len(yield_power)):
+                prod = yield_power[i] if i < len(yield_power) else 0
+                timestamp = time_points[i] if i < len(time_points) else None
+                
+                if not timestamp:
+                    tarif_achat = Config.TARIF_ACHAT
+                else:
+                    # Récupérer le tarif avec cache
+                    dt = from_timestamp_tz(timestamp)
+                    date_str = dt.strftime('%Y-%m-%d')
+                    
+                    if date_str not in tarifs_cache:
+                        day_info = TempoAPI.get_day_info(date_str)
+                        if day_info.get('success'):
+                            tarifs_cache[date_str] = {
+                                'tarif_hp': day_info['tarif_hp'],
+                                'tarif_hc': day_info['tarif_hc'],
+                                'couleur': day_info.get('couleur', 'INCONNU'),
+                                'couleur_css': day_info.get('couleur_css', 'gray')
+                            }
+                        else:
+                            tarifs_cache[date_str] = {
+                                'tarif_hp': Config.TARIF_ACHAT,
+                                'tarif_hc': Config.TARIF_ACHAT * 0.6,
+                                'couleur': 'INCONNU',
+                                'couleur_css': 'gray'
+                            }
+                    
+                    # Déterminer HP/HC
+                    hour = dt.hour
+                    is_hp = 6 <= hour < 22
+                    tarif_achat = tarifs_cache[date_str]['tarif_hp'] if is_hp else tarifs_cache[date_str]['tarif_hc']
+                
+                # Calculer la production en kWh pour cet intervalle
+                prod_kwh = (prod * interval_hours) / 1000
+                revenu += prod_kwh * tarif_achat
+        
+        # Préparer les zones de couleur Tempo pour le graphique
+        tempo_zones = []
+        for date_str, tarif_data in sorted(tarifs_cache.items()):
+            tempo_zones.append({
+                'date': date_str,
+                'couleur': tarif_data.get('couleur', 'INCONNU'),
+                'couleur_css': tarif_data.get('couleur_css', 'gray')
+            })
+        
+        chart_data['tempo_zones'] = tempo_zones
+        
+        return jsonify({
+            'success': True,
+            'period': period,
+            'start_time': start_time,
+            'data': {
+                'energy': round(total_production, 2),
+                'consumption': round(total_consumption, 2),
+                'buy': round(total_buy, 2),
+                'peakPower': round(peak_power_kw, 3),
+                'income': round(revenu, 2)
+            },
+            'chart_data': chart_data
+        })
+    
+    return jsonify(result)
+
+@app.route('/api/energy/cost')
+def api_energy_cost():
+    """
+    Calcul du coût de l'énergie pour l'installation configurée
+    """
+    period = request.args.get('period', 'day')
+    tariff = request.args.get('tariff', type=float, default=0.15)  # €/kWh par défaut
+
+    # Calculer la date de début selon la période
+    now = datetime.now()
+    if period == 'day':
+        start_time = now.strftime('%Y-%m-%d')
+    elif period == 'week':
+        start_time = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+    elif period == 'month':
+        start_time = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+    elif period == 'year':
+        start_time = (now - timedelta(days=365)).strftime('%Y-%m-%d')
+    else:
+        start_time = now.strftime('%Y-%m-%d')
+
+    # Récupérer les données de production
+    production_data = hyxi_client.get_plant_power_statistics(Config.PLANT_ID, start_time)
+
+    # Calculer le coût si les données sont disponibles
+    if not production_data.get('error'):
+        # Extraire les données selon la structure réelle de l'API
+        # À adapter selon la réponse réelle de l'API
+        data_section = production_data.get('data', {})
+
+        # Tenter différentes clés possibles pour l'énergie
+        energy_kwh = (
+            data_section.get('totalEnergy', 0) or
+            data_section.get('energy', 0) or
+            data_section.get('powerGeneration', 0) or
+            0
+        )
+
+        # Convertir en kWh si nécessaire (certaines APIs retournent en Wh)
+        if energy_kwh > 100000:  # Probablement en Wh
+            energy_kwh = energy_kwh / 1000
+
+        total_cost = energy_kwh * tariff
+
+        return jsonify({
+            'success': True,
+            'period': period,
+            'start_time': start_time,
+            'energy_kwh': round(energy_kwh, 2),
+            'tariff': tariff,
+            'total_cost': round(total_cost, 2),
+            'currency': 'EUR',
+            'raw_data': production_data
+        })
+    else:
+        return jsonify(production_data)
+
+
+@app.route('/api/summary')
+def api_summary():
+    """
+    Résumé de l'installation configurée
+    """
+    try:
+        # Récupérer les infos de l'installation
+        plant_info = hyxi_client.get_plant_info(Config.PLANT_ID)
+
+        if plant_info.get('error'):
+            return jsonify(plant_info)
+
+        return jsonify({
+            'plant_id': Config.PLANT_ID,
+            'plant_name': Config.PLANT_NAME,
+            'plant_info': plant_info
+        })
+
+    except Exception as e:
+        return jsonify({
+            'error': True,
+            'message': str(e)
+        })
+
+
+@app.errorhandler(404)
+def not_found(error):
+    """Gestion des erreurs 404"""
+    return jsonify({'error': 'Route non trouvée'}), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Gestion des erreurs 500"""
+    return jsonify({'error': 'Erreur serveur interne'}), 500
+
+
+if __name__ == '__main__':
+    print("=" * 50)
+    print("HyxiCalculator - Démarrage du serveur")
+    print("=" * 50)
+    print(f"URL: http://{Config.HOST}:{Config.PORT}")
+    print(f"Mode debug: {Config.DEBUG}")
+    print(f"API Hyxi: {Config.HYXI_API_BASE_URL}")
+    print("=" * 50)
+
+    app.run(
+        host=Config.HOST,
+        port=Config.PORT,
+        debug=Config.DEBUG
+    )
