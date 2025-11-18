@@ -14,18 +14,13 @@ Application web complète pour le monitoring en temps réel de centrale solaire 
 
 ## 📸 Captures d'écran
 
-### Dashboard principal
+### données temps réel (5min)
 > Visualisation en temps réel de la production, consommation et métriques de performance
 
-![Dashboard Overview](docs/images/dashboard-overview.png)
-
-### Graphiques avec zones Tempo
-> Affichage des tarifs en temps réel avec zones de couleur (bleu/blanc/rouge)
-
-![Graphiques Tempo](docs/images/tempo-colors.png)
+![Dashboard Overview](docs/images/real-time.png)
 
 ### Métriques détaillées
-> Autoconsommation, rendement PV, revenu et couverture solaire
+> Autoconsommation, rendement PV, revenu et couverture solaire sur la journée ou semaine
 
 ![Métriques](docs/images/metrics-display.png)
 
