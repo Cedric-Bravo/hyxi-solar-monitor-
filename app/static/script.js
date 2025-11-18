@@ -25,17 +25,17 @@ document.addEventListener('DOMContentLoaded', function () {
     // Charger la configuration (PLANT_ID)
     loadConfig();
 
-    // Rafraîchissement automatique toutes les 30 secondes
+    // Rafraîchissement automatique toutes les 301 secondes
     refreshInterval = setInterval(() => {
         if (currentPlantId) {
             loadRealtimeData();
             loadEnergyProduction();
             loadEnergyCost();
         }
-        // Rafraîchir Tempo toutes les 30 sec aussi
+        // Rafraîchir Tempo toutes les 301 sec aussi
         loadTempoInfo();
         loadTempoTomorrow();
-    }, 30000);
+    }, 301000);
 });
 
 // Vérifier le statut de l'API
