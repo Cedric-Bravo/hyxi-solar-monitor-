@@ -12,6 +12,23 @@ Application web complète pour le monitoring en temps réel de centrale solaire 
 - 🔄 **Rafraîchissement auto** - Mise à jour des données toutes les 30 secondes
 - 🐳 **Docker ready** - Déploiement facile avec Docker Compose
 
+## 📸 Captures d'écran
+
+### Dashboard principal
+> Visualisation en temps réel de la production, consommation et métriques de performance
+
+![Dashboard Overview](docs/images/dashboard-overview.png)
+
+### Graphiques avec zones Tempo
+> Affichage des tarifs en temps réel avec zones de couleur (bleu/blanc/rouge)
+
+![Graphiques Tempo](docs/images/tempo-colors.png)
+
+### Métriques détaillées
+> Autoconsommation, rendement PV, revenu et couverture solaire
+
+![Métriques](docs/images/metrics-display.png)
+
 ## 📦 Installation rapide
 
 ### Avec Docker (recommandé)
