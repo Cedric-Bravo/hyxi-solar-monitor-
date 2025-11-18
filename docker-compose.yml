@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   hyxicalculator:
@@ -18,6 +18,15 @@ services:
       - HYXI_ACCESS_KEY=${HYXI_ACCESS_KEY}
       - HYXI_SECRET_KEY=${HYXI_SECRET_KEY}
       - HYXI_APPLICATION=test
+
+      # Configuration centrale solaire
+      - PLANT_ID=${PLANT_ID}
+      - PLANT_NAME=${PLANT_NAME}
+
+      # Tarifs
+      - TARIF_ACHAT=${TARIF_ACHAT:-0.1494}
+      - TARIF_VENTE=${TARIF_VENTE:-0.004}
+      - RESALE_ENABLED=${RESALE_ENABLED:-False}
     volumes:
       # Monter le code en mode développement (commenter en production)
       - ./app:/app/app
